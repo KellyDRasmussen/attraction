@@ -164,9 +164,9 @@ summary = pd.DataFrame({
 st.dataframe(
     summary.style
         .format("{:,.0f}")
-        .applymap(lambda v: "color: #0072B2; font-weight:bold", subset=["Immigration"])
-        .applymap(lambda v: "color: #D55E00; font-weight:bold", subset=["Emigration"])
-        .applymap(
+        .map(lambda v: "color: #0072B2; font-weight:bold", subset=["Immigration"])
+        .map(lambda v: "color: #D55E00; font-weight:bold", subset=["Emigration"])
+        .map(
             lambda v: f"color: {'#009E73' if v >= 0 else '#CC3311'}; font-weight:bold",
             subset=["Net Migration"],
         ),
