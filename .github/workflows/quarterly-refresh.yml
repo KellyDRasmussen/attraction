@@ -37,6 +37,12 @@ jobs:
       - name: Fetch population data
         run: python fetch_population.py
 
+      # Analyse latest data and DM results to Slack
+      - name: Run quarterly analysis
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: python quarterly_report.py
+
       - name: Commit and push updated CSVs
         run: |
           git config user.name  "github-actions[bot]"
