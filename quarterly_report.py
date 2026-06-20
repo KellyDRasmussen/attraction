@@ -73,29 +73,35 @@ def working_age_analysis(wa, muni_names):
     foreign = wa[wa["citizenship_status"] == "Foreign citizen"]
     danish  = wa[wa["citizenship_status"] == "Danish citizen"]
 
-    latest = int(wa["year"].max())
-    prev   = latest - 1
+    # Compare latest period vs same quarter last year
+    periods = wa.sort_values(["year", "quarter"])["period"].unique()
+    latest_period = periods[-1]
+    latest_year   = int(latest_period[:4])
+    latest_q      = int(latest_period[-1])
+    prev_period   = f"{latest_year - 1}K{latest_q}"
 
-    f_by_year = foreign.groupby("year")["working_age_population"].sum()
-    d_by_year = danish.groupby("year")["working_age_population"].sum()
+    def totals_for(period):
+        f = foreign[foreign["period"] == period]["working_age_population"].sum()
+        d = danish[danish["period"] == period]["working_age_population"].sum()
+        return int(f), int(d)
 
-    f_latest = int(f_by_year.get(latest, 0))
-    f_prev   = int(f_by_year.get(prev, 0))
-    f_delta  = f_latest - f_prev
-    f_pct    = (f_delta / f_prev * 100) if f_prev else 0
+    f_latest, d_latest = totals_for(latest_period)
+    f_prev, _          = totals_for(prev_period)
 
-    total_latest  = f_latest + int(d_by_year.get(latest, 0))
+    f_delta       = f_latest - f_prev
+    f_pct         = (f_delta / f_prev * 100) if f_prev else 0
+    total_latest  = f_latest + d_latest
     foreign_share = (f_latest / total_latest * 100) if total_latest else 0
 
     # Which municipality shifted most in foreign working-age share?
-    def share_by_muni(year):
-        f = foreign[foreign["year"] == year].groupby("municipality")["working_age_population"].sum()
-        d = danish[danish["year"] == year].groupby("municipality")["working_age_population"].sum()
+    def share_by_muni(period):
+        f = foreign[foreign["period"] == period].groupby("municipality")["working_age_population"].sum()
+        d = danish[danish["period"] == period].groupby("municipality")["working_age_population"].sum()
         total = (f + d).replace(0, pd.NA)
         return (f / total * 100).dropna()
 
-    curr_share  = share_by_muni(latest)
-    prev_share  = share_by_muni(prev)
+    curr_share  = share_by_muni(latest_period)
+    prev_share  = share_by_muni(prev_period)
     share_delta = (curr_share - prev_share).dropna().sort_values(ascending=False)
 
     if len(share_delta):
@@ -106,7 +112,7 @@ def working_age_analysis(wa, muni_names):
     else:
         top_name, top_delta, top_curr = "N/A", 0.0, 0.0
 
-    return latest, f_latest, f_delta, f_pct, foreign_share, top_name, top_delta, top_curr
+    return latest_period, prev_period, f_latest, f_delta, f_pct, foreign_share, top_name, top_delta, top_curr
 
 
 # ── Formatting ────────────────────────────────────────────────────────────────
@@ -123,7 +129,7 @@ def build_message(net_data, wa_data):
     (latest_year, latest_total, prev_total, delta, pct,
      top5_in, top5_out, top_movers) = net_data
 
-    (wa_year, f_latest, f_delta, f_pct, foreign_share,
+    (wa_period, wa_prev_period, f_latest, f_delta, f_pct, foreign_share,
      top_muni, top_muni_delta, top_muni_curr) = wa_data
 
     now = datetime.now()
@@ -160,7 +166,7 @@ def build_message(net_data, wa_data):
 *Biggest year-on-year shifts in net migration:*
 {mover_lines}
 
-*Working-age foreign residents (15–64), {wa_year}:* {f_latest:,}  {arrow(f_delta)} {abs(f_delta):,} ({abs(f_pct):.1f}%)
+*Working-age foreign residents (15–64), {wa_period}:* {f_latest:,}  {arrow(f_delta)} {abs(f_delta):,} ({abs(f_pct):.1f}%) vs {wa_prev_period}
 Foreign share of working-age population: {foreign_share:.1f}%
 
 *Municipal flag:* {top_muni} had the biggest jump in foreign working-age share — {top_muni_delta:+.1f} percentage points, now {top_muni_curr:.1f}%"""
