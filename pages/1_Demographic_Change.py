@@ -122,8 +122,8 @@ st.markdown("---")
 st.subheader(f"All municipalities — foreign working-age share ({latest})")
 
 def muni_shares(year):
-    f = wa[wa["year"] == year][wa["citizenship_status"] == FOREIGN].set_index("municipality")["working_age_population"]
-    d = wa[wa["year"] == year][wa["citizenship_status"] == DANISH].set_index("municipality")["working_age_population"]
+    f = wa[(wa["year"] == year) & (wa["citizenship_status"] == FOREIGN)].set_index("municipality")["working_age_population"]
+    d = wa[(wa["year"] == year) & (wa["citizenship_status"] == DANISH)].set_index("municipality")["working_age_population"]
     total = (f + d).replace(0, np.nan)
     return f, d, total, f / total * 100
 
