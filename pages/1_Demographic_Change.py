@@ -5,8 +5,6 @@ import numpy as np
 
 from groups import REGIONS
 
-st.set_page_config(page_title="Demographic Change", layout="wide")
-
 DANISH  = "Danish citizen"
 FOREIGN = "Foreign citizen"
 
