@@ -33,7 +33,8 @@ def get_municipality_codes() -> list[str]:
 
 
 def get_q1_periods() -> list[str]:
-    return [t for t in _get_variable_values("FOLK1B", "Tid") if t.endswith("Q1")]
+    # Statbank uses Danish notation: 2024K1 = Q1 2024
+    return [t for t in _get_variable_values("FOLK1B", "Tid") if t.endswith("K1")]
 
 
 def _fetch_csv(table: str, variables: list[dict]) -> pd.DataFrame:
