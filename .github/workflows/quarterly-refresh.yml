@@ -1,0 +1,48 @@
+# .github/workflows/quarterly-refresh.yml
+#
+# Runs on the 1st of Jan / Apr / Jul / Oct at 06:00 UTC.
+# Pulls updated data from Statbank and pushes new CSVs back to main,
+# which triggers Streamlit Cloud to redeploy automatically.
+#
+# To test manually: Actions → "Quarterly data refresh" → Run workflow.
+
+name: Quarterly data refresh
+
+on:
+  schedule:
+    - cron: '0 6 1 1,4,7,10 *'
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # VAN1AAR + VAN2AAR  (immigration & emigration)
+      - name: Fetch migration data
+        run: python fetch_migration.py
+
+      # FOLK1B + FOLK1D  (population totals & working-age by citizenship status)
+      - name: Fetch population data
+        run: python fetch_population.py
+
+      - name: Commit and push updated CSVs
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add immigration.csv emigration.csv \
+                  population_by_nationality.csv working_age_by_status.csv
+          git diff --staged --quiet \
+            || git commit -m "chore: quarterly data refresh $(date +'%Y-%m-%d')"
+          git push
