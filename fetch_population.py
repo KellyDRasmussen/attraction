@@ -10,7 +10,7 @@ Run in CI:     called by .github/workflows/quarterly-refresh.yml
 """
 
 import re
-from io import StringIO
+from io import StringIO  # used by pd.read_csv on the API response text
 
 import pandas as pd
 import requests
@@ -37,11 +37,11 @@ def get_q1_periods() -> list[str]:
     return [t for t in _get_variable_values("FOLK1B", "Tid") if t.endswith("K1")]
 
 
-def _fetch_csv(table: str, variables: list[dict]) -> pd.DataFrame:
+def _fetch_bulk(table: str, variables: list[dict]) -> pd.DataFrame:
+    """Fetch from Statbank using BULK format (same as fetch_migration.py)."""
     payload = {
         "table": table,
-        "format": "CSV",
-        "valuePresentation": "Code",
+        "format": "BULK",
         "delimiter": "Semicolon",
         "lang": "en",
         "variables": variables,
@@ -49,8 +49,15 @@ def _fetch_csv(table: str, variables: list[dict]) -> pd.DataFrame:
     resp = requests.post(f"{API_BASE}/data", json=payload, timeout=180)
     resp.raise_for_status()
     df = pd.read_csv(StringIO(resp.text), sep=";", dtype=str)
-    df.columns = [c.upper() for c in df.columns]
+    df.columns = [c.strip().upper() for c in df.columns]
     return df
+
+
+def _val_col(df: pd.DataFrame, id_cols: set[str]) -> str:
+    """Return the single non-id column (the value column)."""
+    others = [c for c in df.columns if c not in id_cols]
+    assert len(others) == 1, f"Expected 1 value column, got: {others}"
+    return others[0]
 
 
 def fetch_population_by_nationality(municipalities: list[str], q1_periods: list[str]) -> pd.DataFrame:
@@ -58,20 +65,22 @@ def fetch_population_by_nationality(municipalities: list[str], q1_periods: list[
     FOLK1B — total population by municipality, citizenship, year.
     One row per municipality × citizenship × year; sex and age collapsed to totals.
     """
-    df = _fetch_csv("FOLK1B", [
+    df = _fetch_bulk("FOLK1B", [
         {"code": "OMRÅDE", "values": municipalities},
         {"code": "KØN",    "values": ["TOT"]},
         {"code": "ALDER",  "values": ["IALT"]},
         {"code": "STATSB", "values": ["*"]},
         {"code": "Tid",    "values": q1_periods},
     ])
+    id_cols = {"OMRÅDE", "KØN", "ALDER", "STATSB", "TID"}
+    val = _val_col(df, id_cols)
     df["year"] = df["TID"].str[:4].astype(int)
-    df["INDHOLD"] = pd.to_numeric(df["INDHOLD"], errors="coerce").fillna(0).astype(int)
+    df[val] = pd.to_numeric(df[val], errors="coerce").fillna(0).astype(int)
     return (
-        df.groupby(["OMRÅDE", "STATSB", "year"])["INDHOLD"]
+        df.groupby(["OMRÅDE", "STATSB", "year"])[val]
         .sum()
         .reset_index()
-        .rename(columns={"OMRÅDE": "municipality", "STATSB": "citizenship", "INDHOLD": "population"})
+        .rename(columns={"OMRÅDE": "municipality", "STATSB": "citizenship", val: "population"})
     )
 
 
@@ -81,23 +90,25 @@ def fetch_working_age_by_status(municipalities: list[str], q1_periods: list[str]
     Ages summed across 15–64; both sexes combined.
     """
     working_age_codes = [str(age) for age in range(15, 65)]
-    df = _fetch_csv("FOLK1D", [
+    df = _fetch_bulk("FOLK1D", [
         {"code": "OMRÅDE", "values": municipalities},
         {"code": "KØN",    "values": ["TOT"]},
         {"code": "ALDER",  "values": working_age_codes},
         {"code": "STATSB", "values": ["DANSK", "UDLAND"]},
         {"code": "Tid",    "values": q1_periods},
     ])
+    id_cols = {"OMRÅDE", "KØN", "ALDER", "STATSB", "TID"}
+    val = _val_col(df, id_cols)
     df["year"] = df["TID"].str[:4].astype(int)
-    df["INDHOLD"] = pd.to_numeric(df["INDHOLD"], errors="coerce").fillna(0).astype(int)
+    df[val] = pd.to_numeric(df[val], errors="coerce").fillna(0).astype(int)
     return (
-        df.groupby(["OMRÅDE", "STATSB", "year"])["INDHOLD"]
+        df.groupby(["OMRÅDE", "STATSB", "year"])[val]
         .sum()
         .reset_index()
         .rename(columns={
             "OMRÅDE": "municipality",
             "STATSB": "citizenship_status",
-            "INDHOLD": "working_age_population",
+            val: "working_age_population",
         })
     )
 
