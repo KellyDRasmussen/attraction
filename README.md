@@ -6,10 +6,16 @@ An interactive Streamlit app for exploring immigration and emigration patterns a
 
 ## What it does
 
+**Migration Explorer** (home page)
 - Visualises yearly immigration, emigration, and net migration as a mirrored bar chart
 - Filter by **geographic scope**: all of Denmark, a specific region, or an individual kommune
 - Filter by **citizenship**: all countries, a single country, or grouped by EU membership, continent, G7/G20, Global North/South, and more
 - Summary table with colour-coded values for quick reading
+
+**Demographic Change** (second page)
+- Tracks working-age population (15–64) split between Danish and foreign citizens, from 2008 to present (Q1 snapshots)
+- Line chart of foreign share over time; stacked bar of totals by year
+- Municipality rankings table sorted by foreign working-age share, with year-on-year change highlighted
 
 ## Data sources
 
@@ -56,7 +62,9 @@ streamlit run app.py
 ## Project structure
 
 ```
-app.py                        # Streamlit app
+app.py                        # Migration Explorer (home page)
+pages/
+  1_Demographic_Change.py     # Working-age population by citizenship (second page)
 groups.py                     # Region and citizenship group definitions
 fetch_migration.py            # Fetches VAN1AAR + VAN2AAR from Statbank
 fetch_population.py           # Fetches FOLK1B + FOLK1D from Statbank
