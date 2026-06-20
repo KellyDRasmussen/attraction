@@ -7,7 +7,7 @@ import numpy as np
 from groups import REGIONS, build_groups
 
 # ── Page config ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Denmark Migration Explorer", layout="wide")
+st.set_page_config(page_title="Denmark Migration Explorer", layout="wide", page_icon="🇩🇰")
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 @st.cache_data
