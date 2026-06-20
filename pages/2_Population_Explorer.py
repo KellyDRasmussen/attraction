@@ -26,8 +26,9 @@ except FileNotFoundError:
     )
     st.stop()
 
-all_municipalities = sorted(pop["municipality"].unique())
-all_citizenships   = sorted(pop["citizenship"].unique())
+all_municipalities  = sorted(pop["municipality"].unique())
+all_citizenships    = sorted(pop["citizenship"].unique())
+foreign_citizenships = [c for c in all_citizenships if c != "Denmark"]
 all_periods        = pop.sort_values(["year", "quarter"])["period"].unique().tolist()
 GROUPS             = build_groups(all_citizenships)
 data_munis         = set(all_municipalities)
@@ -66,7 +67,7 @@ if mode == "All foreign citizenships":
     series = {"All foreign": set(all_citizenships) - {"Denmark"}}
     citizenship_label = "All foreign citizenships"
 elif mode == "Individual country":
-    country = st.sidebar.selectbox("Country", all_citizenships)
+    country = st.sidebar.selectbox("Country", foreign_citizenships)
     series = {country: {country}}
     citizenship_label = country
 else:
@@ -78,6 +79,10 @@ else:
 df = pop.copy()
 if selected_municipalities is not None:
     df = df[df["municipality"].isin(selected_municipalities)]
+
+# Exclude Danish citizens unless the user explicitly asked for the Danish/Non-Danish comparison
+if mode != "Danish / Non-Danish":
+    df = df[df["citizenship"] != "Denmark"]
 
 # ── Aggregate each series over periods ────────────────────────────────────────
 series_data = {}
