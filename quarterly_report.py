@@ -1,6 +1,9 @@
 """
 quarterly_report.py — analyse latest migration data and post findings to Slack.
 Called by .github/workflows/quarterly-refresh.yml after the data fetch steps.
+
+Q1 message: full annual migration recap + quarterly working-age update.
+Q2/Q3/Q4 message: quarterly working-age update only (migration data unchanged).
 """
 
 import os
@@ -23,7 +26,6 @@ def load_data():
 
 
 def get_municipality_names():
-    """Return dict of municipality code → name from Statbank metadata."""
     resp = requests.get(STATBANK_META, timeout=30)
     resp.raise_for_status()
     for var in resp.json()["variables"]:
@@ -51,7 +53,6 @@ def net_migration_analysis(imm, emi):
     delta        = latest_total - prev_total
     pct          = (delta / abs(prev_total) * 100) if prev_total else 0
 
-    # Top 5 inflows and outflows (latest year, excluding Danish citizens)
     by_nat = (
         net[(net["year"] == latest) & (net["citizenship"] != "Denmark")]
         .groupby("citizenship")["net"].sum()
@@ -60,10 +61,9 @@ def net_migration_analysis(imm, emi):
     top5_in  = by_nat.head(5)
     top5_out = by_nat[by_nat < 0].tail(5).sort_values()
 
-    # Biggest year-on-year movers (absolute change in net migration)
-    curr = net[net["year"] == latest].groupby("citizenship")["net"].sum()
+    curr     = net[net["year"] == latest].groupby("citizenship")["net"].sum()
     prev_nat = net[net["year"] == prev].groupby("citizenship")["net"].sum()
-    change = (curr - prev_nat).dropna()
+    change   = (curr - prev_nat).dropna()
     top_movers = change.reindex(change.abs().sort_values(ascending=False).index).head(5)
 
     return latest, latest_total, prev_total, delta, pct, top5_in, top5_out, top_movers
@@ -73,8 +73,7 @@ def working_age_analysis(wa, muni_names):
     foreign = wa[wa["citizenship_status"] == "Foreign citizen"]
     danish  = wa[wa["citizenship_status"] == "Danish citizen"]
 
-    # Compare latest period vs same quarter last year
-    periods = wa.sort_values(["year", "quarter"])["period"].unique()
+    periods       = wa.sort_values(["year", "quarter"])["period"].unique()
     latest_period = periods[-1]
     latest_year   = int(latest_period[:4])
     latest_q      = int(latest_period[-1])
@@ -87,13 +86,11 @@ def working_age_analysis(wa, muni_names):
 
     f_latest, d_latest = totals_for(latest_period)
     f_prev, _          = totals_for(prev_period)
+    f_delta            = f_latest - f_prev
+    f_pct              = (f_delta / f_prev * 100) if f_prev else 0
+    total_latest       = f_latest + d_latest
+    foreign_share      = (f_latest / total_latest * 100) if total_latest else 0
 
-    f_delta       = f_latest - f_prev
-    f_pct         = (f_delta / f_prev * 100) if f_prev else 0
-    total_latest  = f_latest + d_latest
-    foreign_share = (f_latest / total_latest * 100) if total_latest else 0
-
-    # Which municipality shifted most in foreign working-age share?
     def share_by_muni(period):
         f = foreign[foreign["period"] == period].groupby("municipality")["working_age_population"].sum()
         d = danish[danish["period"] == period].groupby("municipality")["working_age_population"].sum()
@@ -115,47 +112,43 @@ def working_age_analysis(wa, muni_names):
     return latest_period, prev_period, f_latest, f_delta, f_pct, foreign_share, top_name, top_delta, top_curr
 
 
-# ── Formatting ────────────────────────────────────────────────────────────────
+# ── Message building ──────────────────────────────────────────────────────────
 
 def arrow(n):
     return "▲" if n > 0 else "▼"
-
 
 def signed(n):
     return f"+{n:,}" if n > 0 else f"{n:,}"
 
 
-def build_message(net_data, wa_data):
-    (latest_year, latest_total, prev_total, delta, pct,
-     top5_in, top5_out, top_movers) = net_data
-
+def build_quarterly_section(wa_data):
     (wa_period, wa_prev_period, f_latest, f_delta, f_pct, foreign_share,
      top_muni, top_muni_delta, top_muni_curr) = wa_data
 
-    now = datetime.now()
-    quarter = f"Q{(now.month - 1) // 3 + 1} {now.year}"
+    return f"""*Working-age foreign residents (15–64), {wa_period}:* {f_latest:,}  {arrow(f_delta)} {abs(f_delta):,} ({abs(f_pct):.1f}%) vs {wa_prev_period}
+Foreign share of working-age population: {foreign_share:.1f}%
+
+*Municipal flag:* {top_muni} had the biggest shift in foreign working-age share — {top_muni_delta:+.1f} pp, now {top_muni_curr:.1f}%"""
+
+
+def build_annual_section(net_data):
+    (latest_year, latest_total, prev_total, delta, pct,
+     top5_in, top5_out, top_movers) = net_data
 
     top5_lines = "\n".join(
         f"  {i+1}. {name}: {signed(int(val))}"
         for i, (name, val) in enumerate(top5_in.items())
     )
-
+    outflow_lines = (
+        "\n".join(f"  • {name}: {signed(int(val))}" for name, val in top5_out.items())
+        if len(top5_out) else "  None"
+    )
     mover_lines = "\n".join(
         f"  • {name}: {signed(int(val))} vs {latest_year - 1}"
         for name, val in top_movers.items()
     )
 
-    outflow_lines = (
-        "\n".join(
-            f"  • {name}: {signed(int(val))}"
-            for name, val in top5_out.items()
-        )
-        if len(top5_out) else "  None"
-    )
-
-    return f"""📊 *Quarterly migration update — {quarter}*
-
-*Net migration {latest_year}:* {latest_total:,} people  {arrow(delta)} {abs(delta):,} ({abs(pct):.1f}%) vs {latest_year - 1}
+    return f"""*Net migration {latest_year}:* {latest_total:,} people  {arrow(delta)} {abs(delta):,} ({abs(pct):.1f}%) vs {latest_year - 1}
 
 *Top 5 nationalities by net inflow:*
 {top5_lines}
@@ -163,31 +156,54 @@ def build_message(net_data, wa_data):
 *Net outflows:*
 {outflow_lines}
 
-*Biggest year-on-year shifts in net migration:*
-{mover_lines}
+*Biggest year-on-year shifts:*
+{mover_lines}"""
 
-*Working-age foreign residents (15–64), {wa_period}:* {f_latest:,}  {arrow(f_delta)} {abs(f_delta):,} ({abs(f_pct):.1f}%) vs {wa_prev_period}
-Foreign share of working-age population: {foreign_share:.1f}%
 
-*Municipal flag:* {top_muni} had the biggest jump in foreign working-age share — {top_muni_delta:+.1f} percentage points, now {top_muni_curr:.1f}%"""
+def build_message(net_data, wa_data, quarter: int):
+    now     = datetime.now()
+    label   = f"Q{quarter} {now.year}"
+    wa_section = build_quarterly_section(wa_data)
+
+    if quarter == 1:
+        annual_section = build_annual_section(net_data)
+        return f"""📊 *Q1 update — {label}*
+
+{annual_section}
+
+──
+{wa_section}"""
+    else:
+        return f"""📊 *{label} population update*
+
+{wa_section}
+
+_Annual migration figures update in Q1._"""
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    now     = datetime.now()
+    quarter = (now.month - 1) // 3 + 1
+
     print("Loading CSVs...")
     imm, emi, wa = load_data()
 
     print("Fetching municipality names from Statbank...")
     muni_names = get_municipality_names()
 
-    print("Analysing net migration...")
-    net_data = net_migration_analysis(imm, emi)
-
     print("Analysing working-age population...")
     wa_data = working_age_analysis(wa, muni_names)
 
-    message = build_message(net_data, wa_data)
+    if quarter == 1:
+        print("Q1 — including annual migration analysis...")
+        net_data = net_migration_analysis(imm, emi)
+    else:
+        print(f"Q{quarter} — quarterly update only (migration data unchanged)...")
+        net_data = None
+
+    message = build_message(net_data, wa_data, quarter)
     print("\n── Message preview ──────────────────────────\n")
     print(message)
     print("\n─────────────────────────────────────────────\n")
