@@ -72,6 +72,17 @@ def _val_col(df: pd.DataFrame, id_cols: set[str]) -> str:
     return others[0]
 
 
+# BULK format always includes a "Total" aggregate row for STATSB.
+# Drop it before writing CSVs to avoid double-counting in every downstream use.
+_STATSB_TOTALS = {"Total"}
+
+
+def _drop_totals(df: pd.DataFrame) -> pd.DataFrame:
+    if "STATSB" in df.columns:
+        return df[~df["STATSB"].isin(_STATSB_TOTALS)]
+    return df
+
+
 def fetch_population_by_nationality(municipalities: list[str], q1_periods: list[str]) -> pd.DataFrame:
     """
     FOLK1B — total population by municipality, citizenship, year (K1 snapshots only).
@@ -85,6 +96,7 @@ def fetch_population_by_nationality(municipalities: list[str], q1_periods: list[
     ])
     id_cols = {"OMRÅDE", "KØN", "ALDER", "STATSB", "TID"}
     val = _val_col(df, id_cols)
+    df = _drop_totals(df)
     df["year"] = df["TID"].str[:4].astype(int)
     df[val] = pd.to_numeric(df[val], errors="coerce").fillna(0).astype(int)
     return (
@@ -141,6 +153,7 @@ def fetch_population_quarterly(municipalities: list[str], recent_periods: list[s
     ])
     id_cols = {"OMRÅDE", "KØN", "ALDER", "STATSB", "TID"}
     val = _val_col(df, id_cols)
+    df = _drop_totals(df)
     df["year"]    = df["TID"].str[:4].astype(int)
     df["quarter"] = df["TID"].str[-1].astype(int)
     df["period"]  = df["TID"]

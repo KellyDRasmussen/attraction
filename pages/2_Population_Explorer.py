@@ -13,6 +13,8 @@ PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7",
 @st.cache_data
 def load_data():
     df = pd.read_csv("population_quarterly.csv")
+    # BULK format includes a "Total" aggregate row — drop it to avoid double-counting
+    df = df[df["citizenship"] != "Total"]
     return df.sort_values(["year", "quarter"]).reset_index(drop=True)
 
 
