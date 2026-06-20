@@ -70,8 +70,8 @@ def net_migration_analysis(imm, emi):
 
 
 def working_age_analysis(wa, muni_names):
-    foreign = wa[wa["citizenship_status"] == "UDLAND"]
-    danish  = wa[wa["citizenship_status"] == "DANSK"]
+    foreign = wa[wa["citizenship_status"] == "Foreign citizen"]
+    danish  = wa[wa["citizenship_status"] == "Danish citizen"]
 
     latest = int(wa["year"].max())
     prev   = latest - 1
