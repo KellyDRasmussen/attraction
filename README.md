@@ -19,10 +19,11 @@ An interactive three-page Streamlit app for exploring immigration, emigration, a
 - Municipality rankings table with foreign share, year-on-year change, and seasonality index
 
 **🔍 Population Explorer**
-- Migration Explorer-style bar chart but for population stock, at quarterly resolution (2020–present)
-- Filter by the same citizenship groups and geographic scope as the Migration Explorer
-- Green/red dots on each bar show whether the quarter is up or down vs the same quarter last year — useful for spotting seasonal construction workers and students
-- Summary table per quarter
+- Population stock at quarterly resolution (2020–present), filterable by citizenship and geography
+- Select a citizenship group (EU/Non-EU, Continent, Global North/South, G7, etc.) to see all subgroups as side-by-side bars on the same quarter — no extra dropdown needed
+- Danish citizens excluded from all views except "Danish / Non-Danish", so foreign populations are legible at scale
+- Seasonal dips in a municipality's bars reveal temporary workers and students on short contracts
+- X-axis labelled by quarter (K1–K4) with year markers
 
 ## Data sources
 
