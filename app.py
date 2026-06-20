@@ -7,7 +7,8 @@ st.set_page_config(
 )
 
 pg = st.navigation([
-    st.Page("pages/0_Migration_Explorer.py", title="Migration Explorer", icon="✈️"),
-    st.Page("pages/1_Demographic_Change.py", title="Demographic Change", icon="📊"),
+    st.Page("pages/0_Migration_Explorer.py", title="Migration Explorer",  icon="✈️"),
+    st.Page("pages/1_Demographic_Change.py", title="Demographic Change",  icon="📊"),
+    st.Page("pages/2_Population_Explorer.py", title="Population Explorer", icon="🔍"),
 ])
 pg.run()

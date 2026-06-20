@@ -6,6 +6,8 @@ Outputs:
   working_age_by_status.csv      — working-age (15–64) per municipality × Danish/Foreign × all quarters
                                    columns: municipality, citizenship_status, year, quarter, period,
                                             working_age_population
+  population_quarterly.csv       — total population per municipality × citizenship × all quarters (2020+)
+                                   columns: municipality, citizenship, year, quarter, period, population
 
 Run manually:  python fetch_population.py
 Run in CI:     called by .github/workflows/quarterly-refresh.yml
@@ -42,6 +44,11 @@ def get_q1_periods() -> list[str]:
 def get_all_periods() -> list[str]:
     # All quarters: 2008K1, 2008K2, 2008K3, 2008K4, 2009K1, ...
     return _get_variable_values("FOLK1D", "Tid")
+
+
+def get_recent_periods(from_year: int = 2020) -> list[str]:
+    # All quarters from from_year onwards (keeps FOLK1B quarterly data manageable)
+    return [t for t in _get_variable_values("FOLK1B", "Tid") if int(t[:4]) >= from_year]
 
 
 def _fetch_bulk(table: str, variables: list[dict]) -> pd.DataFrame:
@@ -120,6 +127,32 @@ def fetch_working_age_by_status(municipalities: list[str], all_periods: list[str
     )
 
 
+def fetch_population_quarterly(municipalities: list[str], recent_periods: list[str]) -> pd.DataFrame:
+    """
+    FOLK1B — total population by municipality, citizenship, all quarters (2020+).
+    Used by the Population Explorer page for quarterly nationality breakdowns.
+    """
+    df = _fetch_bulk("FOLK1B", [
+        {"code": "OMRÅDE", "values": municipalities},
+        {"code": "KØN",    "values": ["TOT"]},
+        {"code": "ALDER",  "values": ["IALT"]},
+        {"code": "STATSB", "values": ["*"]},
+        {"code": "Tid",    "values": recent_periods},
+    ])
+    id_cols = {"OMRÅDE", "KØN", "ALDER", "STATSB", "TID"}
+    val = _val_col(df, id_cols)
+    df["year"]    = df["TID"].str[:4].astype(int)
+    df["quarter"] = df["TID"].str[-1].astype(int)
+    df["period"]  = df["TID"]
+    df[val] = pd.to_numeric(df[val], errors="coerce").fillna(0).astype(int)
+    return (
+        df.groupby(["OMRÅDE", "STATSB", "year", "quarter", "period"])[val]
+        .sum()
+        .reset_index()
+        .rename(columns={"OMRÅDE": "municipality", "STATSB": "citizenship", val: "population"})
+    )
+
+
 if __name__ == "__main__":
     print("Fetching municipality codes...")
     municipalities = get_municipality_codes()
@@ -142,3 +175,12 @@ if __name__ == "__main__":
     wa = fetch_working_age_by_status(municipalities, all_periods)
     wa.to_csv("working_age_by_status.csv", index=False)
     print(f"  → working_age_by_status.csv  ({len(wa):,} rows)")
+
+    print("Fetching recent periods (for FOLK1B quarterly)...")
+    recent_periods = get_recent_periods(from_year=2020)
+    print(f"  {len(recent_periods)} periods ({recent_periods[0]} → {recent_periods[-1]})")
+
+    print("Fetching FOLK1B (population by nationality, all quarters 2020+)...")
+    pop_q = fetch_population_quarterly(municipalities, recent_periods)
+    pop_q.to_csv("population_quarterly.csv", index=False)
+    print(f"  → population_quarterly.csv  ({len(pop_q):,} rows)")

@@ -48,7 +48,8 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add immigration.csv emigration.csv \
-                  population_by_nationality.csv working_age_by_status.csv
+                  population_by_nationality.csv working_age_by_status.csv \
+                  population_quarterly.csv
           git diff --staged --quiet \
             || git commit -m "chore: quarterly data refresh $(date +'%Y-%m-%d')"
           git push

@@ -1,0 +1,182 @@
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import numpy as np
+
+from groups import REGIONS, build_groups
+
+COL_POP    = "#0072B2"
+COL_CHANGE = "#009E73"
+
+
+@st.cache_data
+def load_data():
+    df = pd.read_csv("population_quarterly.csv")
+    df = df.sort_values(["year", "quarter"]).reset_index(drop=True)
+    return df
+
+
+pop = load_data()
+
+all_municipalities = sorted(pop["municipality"].unique())
+all_citizenships   = sorted(pop["citizenship"].unique())
+all_periods        = pop.sort_values(["year", "quarter"])["period"].unique().tolist()
+GROUPS             = build_groups(all_citizenships)
+data_munis         = set(all_municipalities)
+
+REGIONS_CLEAN = {
+    region: [m for m in munis if m in data_munis]
+    for region, munis in REGIONS.items()
+}
+
+# ── Sidebar ────────────────────────────────────────────────────────────────────
+st.sidebar.header("Geographic scope")
+geo_level = st.sidebar.radio("Level", ["All Denmark", "Region", "Municipality"], horizontal=True)
+
+selected_municipalities = None
+geo_label = "All Denmark"
+
+if geo_level == "Region":
+    region = st.sidebar.selectbox("Region", list(REGIONS_CLEAN.keys()))
+    selected_municipalities = REGIONS_CLEAN[region]
+    geo_label = region
+elif geo_level == "Municipality":
+    muni = st.sidebar.selectbox("Municipality", all_municipalities)
+    selected_municipalities = [muni]
+    geo_label = muni
+
+st.sidebar.markdown("---")
+st.sidebar.header("Citizenship filter")
+
+citizenship_group = st.sidebar.selectbox(
+    "Group by",
+    ["All foreign citizenships", "Individual country"] + list(GROUPS.keys()),
+)
+
+selected_citizenships = None
+citizenship_label = "All foreign citizenships"
+
+if citizenship_group == "Individual country":
+    country = st.sidebar.selectbox("Country", all_citizenships)
+    selected_citizenships = {country}
+    citizenship_label = country
+elif citizenship_group in GROUPS:
+    subgroup_options = list(GROUPS[citizenship_group].keys())
+    subgroup = st.sidebar.selectbox("Subgroup", subgroup_options)
+    selected_citizenships = GROUPS[citizenship_group][subgroup]
+    citizenship_label = f"{citizenship_group} — {subgroup}"
+
+# ── Filter ─────────────────────────────────────────────────────────────────────
+df = pop.copy()
+if selected_municipalities is not None:
+    df = df[df["municipality"].isin(selected_municipalities)]
+if selected_citizenships is not None:
+    df = df[df["citizenship"].isin(selected_citizenships)]
+else:
+    # "All foreign" excludes Danish citizens (who appear in FOLK1B but aren't the focus)
+    df = df[df["citizenship"] != "Denmark"]
+
+pop_by_period = df.groupby("period")["population"].sum().reindex(all_periods, fill_value=0)
+
+# Quarter-on-quarter change (vs same quarter previous year)
+def same_q_prev_year(period):
+    yr, q = int(period[:4]), period[-1]
+    return f"{yr - 1}K{q}"
+
+change_by_period = pd.Series({
+    p: pop_by_period[p] - pop_by_period.get(same_q_prev_year(p), 0)
+    for p in all_periods
+})
+
+# ── Header ─────────────────────────────────────────────────────────────────────
+st.title("Population Explorer")
+st.markdown(
+    f"**Location:** {geo_label} &nbsp;|&nbsp; **Citizenship:** {citizenship_label}"
+)
+st.caption("Total population at start of each quarter (FOLK1B). 2020 onwards.")
+
+# ── Metrics ────────────────────────────────────────────────────────────────────
+latest   = all_periods[-1]
+prev_yq  = same_q_prev_year(latest)
+c1, c2, c3 = st.columns(3)
+c1.metric("Population", f"{int(pop_by_period[latest]):,}")
+c2.metric(
+    f"vs {prev_yq} (same quarter last year)",
+    f"{int(change_by_period[latest]):+,}",
+)
+c3.metric("Latest period", latest)
+
+st.markdown("---")
+
+# ── Chart ──────────────────────────────────────────────────────────────────────
+x      = np.arange(len(all_periods))
+width  = 0.6
+vals   = pop_by_period.values
+maxval = max(vals.max(), 1)
+offset = maxval * 0.02
+
+fig, ax = plt.subplots(figsize=(13, 6))
+
+bars = ax.bar(x, vals, width, color=COL_POP, alpha=0.85, zorder=3)
+
+# Mark K1 of each year with a dashed vertical line and year label
+for i, p in enumerate(all_periods):
+    if p.endswith("K1"):
+        ax.axvline(i, color="grey", linewidth=0.5, linestyle="--", zorder=1, alpha=0.6)
+
+# Year-on-year change marker (dot at top of bar, coloured by direction)
+for i, p in enumerate(all_periods):
+    chg = int(change_by_period[p])
+    prev = prev_yq if p == latest else same_q_prev_year(p)
+    if pop_by_period.get(prev, 0) > 0:
+        col = "#009E73" if chg >= 0 else "#CC3311"
+        ax.plot(x[i], vals[i] + offset * 0.5, marker="o", markersize=5,
+                color=col, zorder=5)
+
+# X-axis: year label at every K1
+k1_pos    = [i for i, p in enumerate(all_periods) if p.endswith("K1")]
+k1_labels = [p[:4] for p in all_periods if p.endswith("K1")]
+ax.set_xticks(k1_pos)
+ax.set_xticklabels(k1_labels, fontsize=10)
+
+ax.set_xlabel("Year (dashed = Q1, dots = year-on-year change: green ▲ / red ▼)", fontsize=10)
+ax.set_ylabel("Population", fontsize=11)
+ax.set_title(
+    f"Population — {geo_label}  ·  {citizenship_label}",
+    fontsize=13, pad=14,
+)
+ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
+ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+
+pop_patch = mpatches.Patch(color=COL_POP, alpha=0.85, label="Population (start of quarter)")
+up_dot    = plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#009E73",
+                       markersize=8, label="Higher than same quarter last year")
+dn_dot    = plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#CC3311",
+                       markersize=8, label="Lower than same quarter last year")
+ax.legend(handles=[pop_patch, up_dot, dn_dot], loc="upper left", fontsize=9)
+
+plt.tight_layout()
+st.pyplot(fig)
+plt.close(fig)
+
+# ── Summary table ──────────────────────────────────────────────────────────────
+st.markdown("---")
+summary = pd.DataFrame({
+    "Period":                    all_periods,
+    "Population":                pop_by_period.values.astype(int),
+    "vs same quarter last year": change_by_period.values.astype(int),
+}).set_index("Period")
+
+st.dataframe(
+    summary.style
+        .format("{:,}")
+        .map(
+            lambda v: f"color: {'#009E73' if v > 0 else '#CC3311' if v < 0 else 'black'}; font-weight:bold",
+            subset=["vs same quarter last year"],
+        ),
+    use_container_width=True,
+    height=350,
+)
