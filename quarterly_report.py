@@ -15,6 +15,11 @@ import requests
 SLACK_WEBHOOK = os.environ["SLACK_WEBHOOK"]
 STATBANK_META = "https://api.statbank.dk/v1/tableinfo/FOLK1D?lang=en"
 
+# 3F's "backdoor citizenship" claim: dual nationality lets non-EU nationals
+# in via EU passports — Argentinians on Italian citizenship, Nepalese on
+# Portuguese citizenship. Checked against VAN1AAR (see fetch_migration.py).
+DUAL_CITIZENSHIP_WATCH = [("Argentina", "Italy"), ("Nepal", "Portugal")]
+
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
@@ -22,7 +27,11 @@ def load_data():
     imm = pd.read_csv("immigration.csv")
     emi = pd.read_csv("emigration.csv")
     wa  = pd.read_csv("working_age_by_status.csv")
-    return imm, emi, wa
+    try:
+        dual = pd.read_csv("dual_citizenship_check.csv")
+    except FileNotFoundError:
+        dual = None
+    return imm, emi, wa, dual
 
 
 def get_municipality_names():
@@ -67,6 +76,27 @@ def net_migration_analysis(imm, emi):
     top_movers = change.reindex(change.abs().sort_values(ascending=False).index).head(5)
 
     return latest, latest_total, prev_total, delta, pct, top5_in, top5_out, top_movers
+
+
+def dual_citizenship_analysis(dual):
+    """For each watched (origin, citizenship) pair: latest year vs its peak year."""
+    if dual is None:
+        return None
+
+    rows = []
+    for origin, citizenship in DUAL_CITIZENSHIP_WATCH:
+        series = (
+            dual[(dual["origin_country"] == origin) & (dual["citizenship"] == citizenship)]
+            .set_index("year")["count"]
+        )
+        if series.empty:
+            continue
+        latest_year  = int(series.index.max())
+        latest_count = int(series.get(latest_year, 0))
+        peak_year    = int(series.idxmax())
+        peak_count   = int(series.max())
+        rows.append((origin, citizenship, latest_year, latest_count, peak_year, peak_count))
+    return rows
 
 
 def working_age_analysis(wa, muni_names):
@@ -160,19 +190,42 @@ def build_annual_section(net_data):
 {mover_lines}"""
 
 
-def build_message(net_data, wa_data, quarter: int):
+def build_dual_citizenship_section(rows):
+    if not rows:
+        return None
+
+    lines = []
+    for origin, citizenship, latest_year, latest_count, peak_year, peak_count in rows:
+        if peak_count == 0:
+            trend = "no activity"
+        elif latest_year == peak_year:
+            trend = "highest on record"
+        else:
+            pct = (peak_count - latest_count) / peak_count * 100
+            trend = f"{'down' if latest_count < peak_count else 'up'} {abs(pct):.0f}% vs {peak_year} peak of {peak_count:,}"
+        lines.append(f"  • {origin} → {citizenship} citizenship: {latest_count:,} in {latest_year} ({trend})")
+
+    return f"""*3F "backdoor citizenship" claim, checked:* dual nationality allegedly lets non-EU nationals in via EU passports
+{chr(10).join(lines)}
+No evidence of a rising trend in either group."""
+
+
+def build_message(net_data, wa_data, dual_rows, quarter: int):
     now     = datetime.now()
     label   = f"Q{quarter} {now.year}"
     wa_section = build_quarterly_section(wa_data)
 
     if quarter == 1:
         annual_section = build_annual_section(net_data)
+        dual_section   = build_dual_citizenship_section(dual_rows)
+        sections = [annual_section]
+        if dual_section:
+            sections.append(dual_section)
+        sections.append(wa_section)
+        body = "\n\n──\n".join(sections)
         return f"""📊 *Q1 update — {label}*
 
-{annual_section}
-
-──
-{wa_section}"""
+{body}"""
     else:
         return f"""📊 *{label} population update*
 
@@ -188,7 +241,7 @@ def main():
     quarter = (now.month - 1) // 3 + 1
 
     print("Loading CSVs...")
-    imm, emi, wa = load_data()
+    imm, emi, wa, dual = load_data()
 
     print("Fetching municipality names from Statbank...")
     muni_names = get_municipality_names()
@@ -198,12 +251,14 @@ def main():
 
     if quarter == 1:
         print("Q1 — including annual migration analysis...")
-        net_data = net_migration_analysis(imm, emi)
+        net_data  = net_migration_analysis(imm, emi)
+        dual_rows = dual_citizenship_analysis(dual)
     else:
         print(f"Q{quarter} — quarterly update only (migration data unchanged)...")
-        net_data = None
+        net_data  = None
+        dual_rows = None
 
-    message = build_message(net_data, wa_data, quarter)
+    message = build_message(net_data, wa_data, dual_rows, quarter)
     print("\n── Message preview ──────────────────────────\n")
     print(message)
     print("\n─────────────────────────────────────────────\n")

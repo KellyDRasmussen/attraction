@@ -85,6 +85,61 @@ def process_df(raw_text, dest_col):
     return result.sort_values(["year", "kommune", "citizenship"]).reset_index(drop=True)
 
 
+# ── Dual-citizenship "backdoor" watch ───────────────────────────────────────
+# 3F has claimed dual nationality is a "backdoor" into Denmark for non-EU
+# nationals holding EU passports — e.g. Argentinians on Italian citizenship,
+# Nepalese on Portuguese citizenship. Track the actual (origin, citizenship)
+# immigration numbers nationwide so the claim can be checked against data.
+DUAL_CITIZENSHIP_WATCH = [
+    ("Argentina", "5302", "Italy", "5150"),
+    ("Nepal", "5464", "Portugal", "5156"),
+]
+
+
+def fetch_dual_citizenship_check(years):
+    """VAN1AAR — nationwide immigration filtered to the origin/citizenship pairs above."""
+    origin_codes = sorted({code for _, code, _, _ in DUAL_CITIZENSHIP_WATCH})
+    citizenship_codes = sorted({code for _, _, _, code in DUAL_CITIZENSHIP_WATCH})
+    payload = {
+        "table": "VAN1AAR",
+        "format": "BULK",
+        "delimiter": "Semicolon",
+        "lang": "en",
+        "variables": [
+            {"code": "OMRÅDE", "values": ["000"]},
+            {"code": "KØN", "values": ["*"]},
+            {"code": "ALDER", "values": ["*"]},
+            {"code": "INDVLAND", "values": origin_codes},
+            {"code": "STATSB", "values": citizenship_codes},
+            {"code": "Tid", "values": years},
+        ],
+    }
+    print("Fetching dual-citizenship watch data (VAN1AAR)...")
+    resp = requests.post(BASE_URL, json=payload, timeout=60)
+    resp.raise_for_status()
+    df = pd.read_csv(StringIO(resp.text), sep=";", encoding="utf-8")
+    df.columns = [c.strip() for c in df.columns]
+    df = df.drop(columns=[c for c in df.columns if c.upper() in {"OMRÅDE", "KØN", "ALDER"}])
+
+    id_cols = [c for c in df.columns if c.upper() in {"INDVLAND", "STATSB", "TID"}]
+    val_col = [c for c in df.columns if c not in id_cols][0]
+    df[val_col] = pd.to_numeric(df[val_col], errors="coerce").fillna(0)
+
+    result = df.groupby(id_cols, as_index=False)[val_col].sum()
+    rename_map = {val_col: "count"}
+    for c in result.columns:
+        if c.upper() == "INDVLAND":
+            rename_map[c] = "origin_country"
+        elif c.upper() == "STATSB":
+            rename_map[c] = "citizenship"
+        elif c.upper() == "TID":
+            rename_map[c] = "year"
+    result = result.rename(columns=rename_map)
+    result["year"] = result["year"].astype(int)
+    result["count"] = result["count"].astype(int)
+    return result.sort_values(["origin_country", "citizenship", "year"]).reset_index(drop=True)
+
+
 def main():
     kommune_codes = get_kommune_codes()
 
@@ -100,10 +155,16 @@ def main():
     emi.to_csv("emigration.csv", index=False, encoding="utf-8-sig")
     print(f"Saved emigration.csv — {len(emi):,} rows, {emi['count'].sum():,} total emigrants")
 
+    # Dual-citizenship watch (VAN1AAR, filtered)
+    dual = fetch_dual_citizenship_check(YEARS)
+    dual.to_csv("dual_citizenship_check.csv", index=False, encoding="utf-8-sig")
+    print(f"Saved dual_citizenship_check.csv — {len(dual)} rows")
+
     # Quick sanity check
     print(f"\nTop 5 immigration rows:\n{imm.head()}")
     print(f"\nYearly immigration totals:\n{imm.groupby('year')['count'].sum()}")
     print(f"\nYearly emigration totals:\n{emi.groupby('year')['count'].sum()}")
+    print(f"\nDual-citizenship watch:\n{dual.pivot_table(index='year', columns=['origin_country', 'citizenship'], values='count', fill_value=0)}")
 
 
 if __name__ == "__main__":
