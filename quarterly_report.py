@@ -31,7 +31,11 @@ def load_data():
         dual = pd.read_csv("dual_citizenship_check.csv")
     except FileNotFoundError:
         dual = None
-    return imm, emi, wa, dual
+    try:
+        pop = pd.read_csv("population_by_nationality.csv")
+    except FileNotFoundError:
+        pop = None
+    return imm, emi, wa, dual, pop
 
 
 def get_municipality_names():
@@ -78,8 +82,16 @@ def net_migration_analysis(imm, emi):
     return latest, latest_total, prev_total, delta, pct, top5_in, top5_out, top_movers
 
 
-def dual_citizenship_analysis(dual):
-    """For each watched (origin, citizenship) pair: latest year vs its peak year."""
+def dual_citizenship_analysis(dual, pop):
+    """
+    For each watched (origin, citizenship) pair: direct-arrival flow (latest vs
+    peak year) plus total stock of that citizenship in Denmark (latest vs 2
+    years prior), so the Slack message doesn't overstate what flow data alone
+    can show. Flow only captures people who moved straight from the origin
+    country while already holding the EU citizenship — it misses anyone who
+    naturalised via years of residency in a third EU country first, or after
+    arriving in Denmark, or was born here to parents who hold it.
+    """
     if dual is None:
         return None
 
@@ -95,7 +107,17 @@ def dual_citizenship_analysis(dual):
         latest_count = int(series.get(latest_year, 0))
         peak_year    = int(series.idxmax())
         peak_count   = int(series.max())
-        rows.append((origin, citizenship, latest_year, latest_count, peak_year, peak_count))
+
+        stock_latest, stock_2yr_ago = None, None
+        if pop is not None:
+            stock = pop[pop["citizenship"] == citizenship].groupby("year")["population"].sum()
+            if latest_year in stock.index:
+                stock_latest = int(stock[latest_year])
+                if (latest_year - 2) in stock.index:
+                    stock_2yr_ago = int(stock[latest_year - 2])
+
+        rows.append((origin, citizenship, latest_year, latest_count, peak_year, peak_count,
+                     stock_latest, stock_2yr_ago))
     return rows
 
 
@@ -195,7 +217,7 @@ def build_dual_citizenship_section(rows):
         return None
 
     lines = []
-    for origin, citizenship, latest_year, latest_count, peak_year, peak_count in rows:
+    for origin, citizenship, latest_year, latest_count, peak_year, peak_count, stock_latest, stock_2yr_ago in rows:
         if peak_count == 0:
             trend = "no activity"
         elif latest_year == peak_year:
@@ -203,11 +225,19 @@ def build_dual_citizenship_section(rows):
         else:
             pct = (peak_count - latest_count) / peak_count * 100
             trend = f"{'down' if latest_count < peak_count else 'up'} {abs(pct):.0f}% vs {peak_year} peak of {peak_count:,}"
-        lines.append(f"  • {origin} → {citizenship} citizenship: {latest_count:,} in {latest_year} ({trend})")
+        lines.append(f"  • {origin} → {citizenship} citizenship, direct-arrival flow: {latest_count:,} in {latest_year} ({trend})")
 
-    return f"""*3F "backdoor citizenship" claim, checked:* dual nationality allegedly lets non-EU nationals in via EU passports
+        if stock_latest is not None and stock_2yr_ago:
+            stock_pct = (stock_latest - stock_2yr_ago) / stock_2yr_ago * 100
+            lines.append(
+                f"    (context: total {citizenship}-citizenship population in DK is {stock_latest:,}, "
+                f"{arrow(stock_pct)} {abs(stock_pct):.0f}% over 2 years — flow data can't tell us how much "
+                f"of that is {origin}-origin)"
+            )
+
+    return f"""*3F "backdoor citizenship" claim — what we can check:* 3F reports ~1,200 Nepal-origin Portuguese-passport holders and ~3,200 Argentina-origin Italian-passport holders in Denmark, both up ~75-80% in two years.
 {chr(10).join(lines)}
-No evidence of a rising trend in either group."""
+Direct-arrival flow only counts people who moved straight from the origin country already holding the EU passport — it misses anyone who naturalised via years of residency in a third EU country, naturalised after arriving here, or was born in DK to parents who hold it. We can't confirm or refute 3F's stock figures with this data; flow declining doesn't mean the resident population isn't growing."""
 
 
 def build_message(net_data, wa_data, dual_rows, quarter: int):
@@ -241,7 +271,7 @@ def main():
     quarter = (now.month - 1) // 3 + 1
 
     print("Loading CSVs...")
-    imm, emi, wa, dual = load_data()
+    imm, emi, wa, dual, pop = load_data()
 
     print("Fetching municipality names from Statbank...")
     muni_names = get_municipality_names()
@@ -252,7 +282,7 @@ def main():
     if quarter == 1:
         print("Q1 — including annual migration analysis...")
         net_data  = net_migration_analysis(imm, emi)
-        dual_rows = dual_citizenship_analysis(dual)
+        dual_rows = dual_citizenship_analysis(dual, pop)
     else:
         print(f"Q{quarter} — quarterly update only (migration data unchanged)...")
         net_data  = None
