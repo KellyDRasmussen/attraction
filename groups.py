@@ -126,6 +126,11 @@ EU = {
     "Spain", "Sweden",
 }
 
+# Nordic countries with a favourable immigration arrangement with Denmark
+# (Nordic Passport Union / Common Nordic Labour Market — free movement, no visa),
+# excluding Denmark itself since Danish citizens aren't immigrants to Denmark
+NORDIC = {"Sweden", "Norway", "Finland", "Iceland"}
+
 # Recent political instability — countries with major conflict/displacement since ~2015
 INSTABILITY = {
     "Afghanistan", "Belarus", "Burkina Faso", "Central African Republic",
@@ -159,6 +164,10 @@ def build_groups(all_citizenships: list[str]) -> dict:
         "Danish / Non-Danish": {
             "Danish": {"Denmark"},
             "Non-Danish": all_set - {"Denmark"} - unknown,
+        },
+        "Nordic / Non-Nordic": {
+            "Nordic": NORDIC & all_set,
+            "Non-Nordic": all_set - NORDIC - {"Denmark"} - unknown,
         },
         "G7": {
             "All G7": G7 & all_set,

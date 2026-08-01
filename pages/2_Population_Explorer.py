@@ -1,13 +1,24 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
+import plotly.graph_objects as go
 
-from groups import REGIONS, build_groups
+from groups import REGIONS, build_groups, G7, G20, INSTABILITY, NORDIC
 
-# Colorblind-friendly palette (Wong)
-PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7",
-           "#56B4E9", "#E69F00", "#F0E442", "#999999"]
+# Colorblind-safe categorical palette, fixed order (validated via dataviz skill's
+# palette validator — do not reorder or cycle).
+PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+           "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+OTHER_COLOR = "#898781"   # muted gray — reserved for the folded "Other" bucket
+SURFACE = "#fcfcfb"       # chart surface, used as the gap color between stack segments
+
+TOP_N_ONLY = 7  # cap on individually-colored countries in a "<group> only" stacked view
+
+# Groups with a "vs / only" breakdown (see sidebar) instead of a flat member list
+VS_GROUPS = {
+    "G7": ("G7", G7),
+    "G20": ("G20", G20),
+    "Political instability": ("Instability", INSTABILITY),
+}
 
 
 @st.cache_data
@@ -40,6 +51,18 @@ REGIONS_CLEAN = {
     for region, munis in REGIONS.items()
 }
 
+# Long dropdowns (groups, countries) were getting clipped before the last option —
+# cap the popover height and let it scroll internally instead.
+st.markdown(
+    """
+    <style>
+    ul[data-testid="stSelectboxVirtualDropdown"] { max-height: 50vh !important; }
+    div[data-baseweb="popover"] { max-height: 60vh !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 st.sidebar.header("Geographic scope")
 geo_level = st.sidebar.radio("Level", ["All Denmark", "Region", "Municipality"], horizontal=True)
@@ -64,18 +87,13 @@ mode = st.sidebar.selectbox(
     ["All foreign citizenships", "Individual country"] + list(GROUPS.keys()),
 )
 
-# Build series: dict of {label → set of citizenships}
-if mode == "All foreign citizenships":
-    series = {"All foreign": set(all_citizenships) - {"Denmark"}}
-    citizenship_label = "All foreign citizenships"
-elif mode == "Individual country":
-    country = st.sidebar.selectbox("Country", foreign_citizenships)
-    series = {country: {country}}
-    citizenship_label = country
-else:
-    # Group selected — show all subgroups side by side, no extra dropdown
-    series = {k: v for k, v in GROUPS[mode].items() if v}
-    citizenship_label = mode
+view = None
+if mode in VS_GROUPS:
+    short, _ = VS_GROUPS[mode]
+    view = st.sidebar.selectbox(
+        f"{mode} view",
+        [f"{short} vs Non-{short}", f"{short} only", f"Non-{short} only"],
+    )
 
 # ── Filter geography ───────────────────────────────────────────────────────────
 df = pop.copy()
@@ -86,14 +104,67 @@ if selected_municipalities is not None:
 if mode != "Danish / Non-Danish":
     df = df[df["citizenship"] != "Denmark"]
 
+# ── Build series ───────────────────────────────────────────────────────────────
+# Either a dict of label → set[citizenship] (aggregated below), or, for "<group>
+# only" views, a dict of label → pd.Series resolved directly (it folds a long
+# tail of countries into "Other", so it bypasses the generic set-based path).
+series = None
+series_data_override = None
+
+if mode == "All foreign citizenships":
+    series = {"All foreign": set(all_citizenships) - {"Denmark"}}
+    citizenship_label = "All foreign citizenships"
+elif mode == "Individual country":
+    country = st.sidebar.selectbox("Country", foreign_citizenships)
+    series = {country: {country}}
+    citizenship_label = country
+elif mode in VS_GROUPS:
+    short, group_set = VS_GROUPS[mode]
+    group_set = group_set & set(all_citizenships)
+    non_set = set(foreign_citizenships) - group_set
+
+    if view == f"{short} vs Non-{short}":
+        series = {short: group_set, f"Non-{short}": non_set}
+        citizenship_label = f"{mode} — {short} vs Non-{short}"
+    elif view == f"{short} only":
+        totals = (
+            df[df["citizenship"].isin(group_set)]
+            .groupby("citizenship")["population"].sum()
+            .sort_values(ascending=False)
+        )
+        top = list(totals.index[:TOP_N_ONLY])
+        rest = list(totals.index[TOP_N_ONLY:])
+        series_data_override = {}
+        for c in top:
+            series_data_override[c] = (
+                df[df["citizenship"] == c].groupby("period")["population"].sum()
+                .reindex(all_periods, fill_value=0)
+            )
+        if rest:
+            series_data_override[f"Other {short} ({len(rest)})"] = (
+                df[df["citizenship"].isin(rest)].groupby("period")["population"].sum()
+                .reindex(all_periods, fill_value=0)
+            )
+        citizenship_label = f"{mode} — {short} only"
+    else:  # f"Non-{short} only"
+        series = {f"Non-{short}": non_set}
+        citizenship_label = f"{mode} — Non-{short} only"
+else:
+    # Group selected — show all subgroups together (stacked), no extra dropdown
+    series = {k: v for k, v in GROUPS[mode].items() if v}
+    citizenship_label = mode
+
 # ── Aggregate each series over periods ────────────────────────────────────────
-series_data = {}
-for label, citizenships in series.items():
-    filtered = df[df["citizenship"].isin(citizenships)]
-    series_data[label] = (
-        filtered.groupby("period")["population"].sum()
-        .reindex(all_periods, fill_value=0)
-    )
+if series_data_override is not None:
+    series_data = series_data_override
+else:
+    series_data = {}
+    for label, citizenships in series.items():
+        filtered = df[df["citizenship"].isin(citizenships)]
+        series_data[label] = (
+            filtered.groupby("period")["population"].sum()
+            .reindex(all_periods, fill_value=0)
+        )
 
 # Drop series that are all zero
 series_data = {k: v for k, v in series_data.items() if v.sum() > 0}
@@ -107,43 +178,80 @@ if not series_data:
     st.warning("No data for this combination.")
     st.stop()
 
-# ── Chart ──────────────────────────────────────────────────────────────────────
-n = len(series_data)
+# ── Isolate via table selection (selection persists across reruns) ────────────
+# Keyed on the geography + citizenship choice so a stale row-index selection
+# from a previous series list (e.g. G7 only → G20 only) never silently carries
+# over and isolates the wrong countries — changing mode/view starts fresh.
+TABLE_KEY = f"pop_explorer_series_select__{geo_label}__{mode}__{view}"
+labels_all = list(series_data.keys())
+prior_state = st.session_state.get(TABLE_KEY, {})
+prior_sel = prior_state.get("selection", {}).get("rows", [])
+prior_sel = [i for i in prior_sel if i < len(labels_all)]
+
+chart_data = (
+    {labels_all[i]: series_data[labels_all[i]] for i in prior_sel}
+    if prior_sel else series_data
+)
+
+n = len(chart_data)
 if n > 8:
-    st.warning(f"{n} series selected — chart may be crowded. Consider a narrower group.")
+    st.warning(f"{n} series selected — chart may be crowded. Consider a narrower group or isolate a subset in the table below.")
 
-bar_width = min(0.8 / n, 0.25)
-x = np.arange(len(all_periods))
-
-fig, ax = plt.subplots(figsize=(max(13, len(all_periods) * 0.45), 6))
-
-for i, (label, data) in enumerate(series_data.items()):
-    offset = (i - (n - 1) / 2) * bar_width
-    ax.bar(x + offset, data.values, bar_width,
-           label=label, color=PALETTE[i % len(PALETTE)], alpha=0.88, zorder=3)
-
-# ── X-axis labels: "2020\nK1", "K2", "K3", "K4", "2021\nK1", ... ─────────────
+# ── Chart (stacked bar, click a legend entry to isolate/hide it) ───────────────
 x_labels = []
 for p in all_periods:
     q = p[-1]
-    x_labels.append(f"{p[:4]}\nK1" if q == "1" else f"K{q}")
+    x_labels.append(f"{p[:4]}<br>K1" if q == "1" else f"K{q}")
 
-ax.set_xticks(x)
-ax.set_xticklabels(x_labels, fontsize=8.5)
-ax.set_xlabel("Quarter", fontsize=11)
-ax.set_ylabel("Population", fontsize=11)
-ax.set_title(
-    f"Population — {geo_label}  ·  {citizenship_label}",
-    fontsize=13, pad=14,
+fig = go.Figure()
+
+for i, (label, data) in enumerate(chart_data.items()):
+    color = OTHER_COLOR if label.startswith("Other ") else PALETTE[i % len(PALETTE)]
+    fig.add_trace(go.Bar(
+        x=all_periods,
+        y=data.values,
+        name=label,
+        marker=dict(color=color, line=dict(color=SURFACE, width=1)),
+        hovertemplate=f"<b>{label}</b>: " + "%{y:,.0f}<extra></extra>",
+    ))
+
+fig.update_layout(
+    barmode="stack",
+    template="plotly_white",
+    height=600,
+    title=f"Population — {geo_label} · {citizenship_label}",
+    xaxis=dict(
+        tickmode="array",
+        tickvals=all_periods,
+        ticktext=x_labels,
+        title="Quarter",
+    ),
+    yaxis=dict(title="Population", tickformat=",.0f", rangemode="tozero"),
+    hovermode="x unified",
+    showlegend=n > 1,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    bargap=0.25,
+    margin=dict(t=90),
 )
-ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
-ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
 
-if n > 1:
-    ax.legend(fontsize=9, loc="upper left")
+st.plotly_chart(fig, use_container_width=True)
 
-plt.tight_layout()
-st.pyplot(fig)
-plt.close(fig)
+# ── Data & selection table ──────────────────────────────────────────────────────
+st.markdown("---")
+st.subheader("Data")
+st.caption("Select rows to isolate those series in the chart above. Clear the selection to show all again.")
+
+summary_df = pd.DataFrame({
+    "Series": labels_all,
+    "Latest quarter": [int(series_data[l].iloc[-1]) for l in labels_all],
+    "Total across periods": [int(series_data[l].sum()) for l in labels_all],
+})
+
+st.dataframe(
+    summary_df,
+    use_container_width=True,
+    hide_index=True,
+    on_select="rerun",
+    selection_mode="multi-row",
+    key=TABLE_KEY,
+)
