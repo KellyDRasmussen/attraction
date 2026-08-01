@@ -6,7 +6,20 @@
       "Bash(python poc_chart.py)",
       "Bash(pip show:*)",
       "Bash(pip install:*)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(python3 -c ' *)",
+      "Bash(py --version)",
+      "Bash(python -c ' *)",
+      "Bash(SLACK_WEBHOOK=dummy python -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python eu_passport_analysis.py)",
+      "Bash(python substack/eu_passport_analysis.py)",
+      "Bash(python substack/raw_immigration_chart.py)"
     ]
   }
 }
