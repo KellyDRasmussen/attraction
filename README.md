@@ -2,7 +2,7 @@
 
 An interactive three-page Streamlit app for exploring immigration, emigration, and population patterns across Denmark.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://attraction.streamlit.app)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://netmigration.streamlit.app)
 
 ## Pages
 
