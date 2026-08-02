@@ -1,6 +1,8 @@
 # .github/workflows/quarterly-refresh.yml
 #
-# Runs on the 1st of Jan / Apr / Jul / Oct at 06:00 UTC.
+# Runs on the 15th of Feb / May / Aug / Nov at 06:00 UTC — 6 weeks after each
+# quarter's data-collection point (Jan 1 / Apr 1 / Jul 1 / Oct 1), to give
+# Statbank time to actually publish that quarter before we fetch it.
 # Pulls updated data from Statbank and pushes new CSVs back to main,
 # which triggers Streamlit Cloud to redeploy automatically.
 #

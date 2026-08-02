@@ -4,14 +4,18 @@ from io import StringIO
 
 BASE_URL = "https://api.statbank.dk/v1/data"
 META_URL = "https://api.statbank.dk/v1/tableinfo"
-YEARS = ["2020", "2021", "2022", "2023", "2024", "2025"]
+FROM_YEAR = 2020
+
+
+def _get_table_meta(table_id):
+    resp = requests.post(META_URL, json={"table": table_id, "lang": "en"}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def get_kommune_codes():
     """Fetch all OMRÅDE codes from metadata and return only kommune codes (101-860)."""
-    resp = requests.post(META_URL, json={"table": "VAN1AAR", "lang": "en"}, timeout=30)
-    resp.raise_for_status()
-    meta = resp.json()
+    meta = _get_table_meta("VAN1AAR")
     omrade_var = next(v for v in meta["variables"] if v["id"] == "OMRÅDE")
     kommune_codes = [
         v["id"] for v in omrade_var["values"]
@@ -21,7 +25,17 @@ def get_kommune_codes():
     return kommune_codes
 
 
-def fetch_table(table_id, destination_var, kommune_codes):
+def get_available_years(table_id, from_year=FROM_YEAR):
+    """Years Statbank has actually published for this table, from_year onward —
+    keeps the fetch current automatically instead of a hardcoded year list that
+    goes stale the moment a new year is published."""
+    meta = _get_table_meta(table_id)
+    tid_var = next(v for v in meta["variables"] if v["id"] == "Tid")
+    years = [v["id"] for v in tid_var["values"] if v["id"].isdigit()]
+    return [y for y in years if int(y) >= from_year]
+
+
+def fetch_table(table_id, destination_var, kommune_codes, years):
     """Fetch data from Statbank using specific kommune codes to keep payload manageable."""
     payload = {
         "table": table_id,
@@ -34,7 +48,7 @@ def fetch_table(table_id, destination_var, kommune_codes):
             {"code": "ALDER", "values": ["*"]},
             {"code": destination_var, "values": ["*"]},
             {"code": "STATSB", "values": ["*"]},
-            {"code": "Tid", "values": YEARS},
+            {"code": "Tid", "values": years},
         ],
     }
     print(f"Fetching {table_id} (this may take a while)...")
@@ -144,19 +158,23 @@ def main():
     kommune_codes = get_kommune_codes()
 
     # Immigration (VAN1AAR)
-    imm_raw = fetch_table("VAN1AAR", "INDVLAND", kommune_codes)
+    imm_years = get_available_years("VAN1AAR")
+    print(f"Found {len(imm_years)} years of VAN1AAR data ({imm_years[0]} → {imm_years[-1]})")
+    imm_raw = fetch_table("VAN1AAR", "INDVLAND", kommune_codes, imm_years)
     imm = process_df(imm_raw, dest_col="INDVLAND")
     imm.to_csv("immigration.csv", index=False, encoding="utf-8-sig")
     print(f"\nSaved immigration.csv — {len(imm):,} rows, {imm['count'].sum():,} total immigrants")
 
     # Emigration (VAN2AAR)
-    emi_raw = fetch_table("VAN2AAR", "UDVLAND", kommune_codes)
+    emi_years = get_available_years("VAN2AAR")
+    print(f"Found {len(emi_years)} years of VAN2AAR data ({emi_years[0]} → {emi_years[-1]})")
+    emi_raw = fetch_table("VAN2AAR", "UDVLAND", kommune_codes, emi_years)
     emi = process_df(emi_raw, dest_col="UDVLAND")
     emi.to_csv("emigration.csv", index=False, encoding="utf-8-sig")
     print(f"Saved emigration.csv — {len(emi):,} rows, {emi['count'].sum():,} total emigrants")
 
     # Dual-citizenship watch (VAN1AAR, filtered)
-    dual = fetch_dual_citizenship_check(YEARS)
+    dual = fetch_dual_citizenship_check(imm_years)
     dual.to_csv("dual_citizenship_check.csv", index=False, encoding="utf-8-sig")
     print(f"Saved dual_citizenship_check.csv — {len(dual)} rows")
 

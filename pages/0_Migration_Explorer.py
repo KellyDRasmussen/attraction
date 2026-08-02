@@ -19,7 +19,7 @@ all_kommuner   = sorted(imm["kommune"].unique())
 all_citizenships = sorted(imm["citizenship"].unique())
 GROUPS         = build_groups(all_citizenships)
 
-YEARS = list(range(2020, 2026))
+YEARS = sorted(set(imm["year"]).union(emi["year"]))
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 st.sidebar.header("Geographic scope")
