@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from groups import REGIONS, build_groups, G7, G20, INSTABILITY, NORDIC
+from groups import REGIONS, build_groups, G7, G20, INSTABILITY
 
 # Colorblind-safe categorical palette, fixed order (validated via dataviz skill's
 # palette validator — do not reorder or cycle).
@@ -87,14 +87,6 @@ mode = st.sidebar.selectbox(
     ["All foreign citizenships", "Individual country"] + list(GROUPS.keys()),
 )
 
-view = None
-if mode in VS_GROUPS:
-    short, _ = VS_GROUPS[mode]
-    view = st.sidebar.selectbox(
-        f"{mode} view",
-        [f"{short} vs Non-{short}", f"{short} only", f"Non-{short} only"],
-    )
-
 # ── Filter geography ───────────────────────────────────────────────────────────
 df = pop.copy()
 if selected_municipalities is not None:
@@ -104,55 +96,84 @@ if selected_municipalities is not None:
 if mode != "Danish / Non-Danish":
     df = df[df["citizenship"] != "Denmark"]
 
-# ── Build series ───────────────────────────────────────────────────────────────
-# Either a dict of label → set[citizenship] (aggregated below), or, for "<group>
-# only" views, a dict of label → pd.Series resolved directly (it folds a long
-# tail of countries into "Other", so it bypasses the generic set-based path).
-series = None
-series_data_override = None
 
+def drill_down_series(citizenship_set, label_prefix, top_n=TOP_N_ONLY):
+    """Break a bucket of countries into its top-N individually, folding the
+    long tail into a single "Other" segment — used by every "<category> only"
+    view so any category (EU, a continent, G7's non-members, ...) can be
+    drilled into, not just the top-level groups."""
+    totals = (
+        df[df["citizenship"].isin(citizenship_set)]
+        .groupby("citizenship")["population"].sum()
+        .sort_values(ascending=False)
+    )
+    top = list(totals.index[:top_n])
+    rest = list(totals.index[top_n:])
+    out = {}
+    for c in top:
+        out[c] = (
+            df[df["citizenship"] == c].groupby("period")["population"].sum()
+            .reindex(all_periods, fill_value=0)
+        )
+    if rest:
+        out[f"Other {label_prefix} ({len(rest)})"] = (
+            df[df["citizenship"].isin(rest)].groupby("period")["population"].sum()
+            .reindex(all_periods, fill_value=0)
+        )
+    return out
+
+
+# ── Build this mode's clean subgroup partition: label → set[citizenship] ──────
+# (None for "Individual country", which bypasses subgroups/drill-down entirely.)
 if mode == "All foreign citizenships":
-    series = {"All foreign": set(all_citizenships) - {"Denmark"}}
-    citizenship_label = "All foreign citizenships"
+    subgroups = {"All foreign": set(all_citizenships) - {"Denmark"}}
 elif mode == "Individual country":
-    country = st.sidebar.selectbox("Country", foreign_citizenships)
-    series = {country: {country}}
-    citizenship_label = country
+    subgroups = None
 elif mode in VS_GROUPS:
     short, group_set = VS_GROUPS[mode]
     group_set = group_set & set(all_citizenships)
     non_set = set(foreign_citizenships) - group_set
-
-    if view == f"{short} vs Non-{short}":
-        series = {short: group_set, f"Non-{short}": non_set}
-        citizenship_label = f"{mode} — {short} vs Non-{short}"
-    elif view == f"{short} only":
-        totals = (
-            df[df["citizenship"].isin(group_set)]
-            .groupby("citizenship")["population"].sum()
-            .sort_values(ascending=False)
-        )
-        top = list(totals.index[:TOP_N_ONLY])
-        rest = list(totals.index[TOP_N_ONLY:])
-        series_data_override = {}
-        for c in top:
-            series_data_override[c] = (
-                df[df["citizenship"] == c].groupby("period")["population"].sum()
-                .reindex(all_periods, fill_value=0)
-            )
-        if rest:
-            series_data_override[f"Other {short} ({len(rest)})"] = (
-                df[df["citizenship"].isin(rest)].groupby("period")["population"].sum()
-                .reindex(all_periods, fill_value=0)
-            )
-        citizenship_label = f"{mode} — {short} only"
-    else:  # f"Non-{short} only"
-        series = {f"Non-{short}": non_set}
-        citizenship_label = f"{mode} — Non-{short} only"
+    subgroups = {short: group_set, f"Non-{short}": non_set}
 else:
-    # Group selected — show all subgroups together (stacked), no extra dropdown
-    series = {k: v for k, v in GROUPS[mode].items() if v}
-    citizenship_label = mode
+    subgroups = {k: v for k, v in GROUPS[mode].items() if v}
+
+# ── Secondary "view" selector: the subgroups together, or drill into any one
+#     of them by individual country (every category is drillable, not just
+#     the handful with a hardcoded vs/only structure) ─────────────────────────
+view = None
+labels_ordered = []
+if subgroups is not None:
+    labels_ordered = list(subgroups.keys())
+    if len(labels_ordered) == 1:
+        overview_label = "Total"
+        view_options = [overview_label, "Top countries"]
+    elif len(labels_ordered) == 2:
+        overview_label = f"{labels_ordered[0]} vs {labels_ordered[1]}"
+        view_options = [overview_label] + [f"{l} only" for l in labels_ordered]
+    else:
+        overview_label = "All categories"
+        view_options = [overview_label] + [f"{l} only" for l in labels_ordered]
+    view = st.sidebar.selectbox(f"{mode} view", view_options)
+
+# ── Build series ───────────────────────────────────────────────────────────────
+# Either a dict of label → set[citizenship] (aggregated below), or, for a
+# drill-down view, a dict of label → pd.Series resolved directly by
+# drill_down_series (it folds a long tail of countries into "Other", so it
+# bypasses the generic set-based path).
+series = None
+series_data_override = None
+
+if mode == "Individual country":
+    country = st.sidebar.selectbox("Country", foreign_citizenships)
+    series = {country: {country}}
+    citizenship_label = country
+elif view == overview_label:
+    series = subgroups
+    citizenship_label = mode if mode == "All foreign citizenships" else f"{mode} — {view}"
+else:
+    target_label = labels_ordered[0] if len(labels_ordered) == 1 else view[:-len(" only")]
+    series_data_override = drill_down_series(subgroups[target_label], target_label)
+    citizenship_label = f"{mode} — {view}"
 
 # ── Aggregate each series over periods ────────────────────────────────────────
 if series_data_override is not None:
