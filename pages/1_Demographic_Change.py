@@ -151,8 +151,9 @@ plt.close(fig2)
 st.markdown("---")
 st.subheader(f"All municipalities — {latest_period}")
 st.caption(
-    "**Seasonality** = peak minus trough foreign share across the last 4 quarters. "
-    "High values suggest temporary workers or students."
+    "**4Q range** = peak minus trough foreign share across the last 4 quarters. "
+    "High values can mean real seasonal swings (temporary workers or students) "
+    "or just fast sustained growth — check the underlying trend before assuming either."
 )
 
 def muni_share_for(period):
@@ -176,7 +177,7 @@ table = pd.DataFrame({
     "Municipality":       s_now.index,
     "Foreign share":      s_now.values,
     f"vs {prev_period}":  (s_now - s_prev.reindex(s_now.index)).values,
-    "Seasonality (pp)":   seasonality.reindex(s_now.index).values,
+    "4Q range (pp)":      seasonality.reindex(s_now.index).values,
     "Foreign (15–64)":    wa[
         (wa["period"] == latest_period) & (wa["citizenship_status"] == FOREIGN)
     ].set_index("municipality")["working_age_population"].reindex(s_now.index).values,
@@ -187,14 +188,14 @@ st.dataframe(
         .format({
             "Foreign share":    "{:.1f}%",
             f"vs {prev_period}": "{:+.1f} pp",
-            "Seasonality (pp)": "{:.1f}",
+            "4Q range (pp)":    "{:.1f}",
             "Foreign (15–64)":  "{:,.0f}",
         })
         .map(
             lambda v: f"color: {'#009E73' if v > 0 else '#CC3311'}; font-weight:bold",
             subset=[f"vs {prev_period}"],
         )
-        .background_gradient(subset=["Seasonality (pp)"], cmap="OrRd", vmin=0),
+        .background_gradient(subset=["4Q range (pp)"], cmap="OrRd", vmin=0),
     use_container_width=True,
     height=450,
     hide_index=True,
